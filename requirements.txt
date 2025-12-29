@@ -1,20 +1,24 @@
-pyyaml
-fastapi==0.95.1
-uvicorn
-py3langid
-setuptools-scm
-openai==1.1.0
-opencv-python==4.8.0.76
-gradio
-httpx[socks]==0.25.0
-astunparse
-langchain==0.0.157
-scikit-learn
-pydantic==1.10.7
-typing-extensions==4.5.0
-typing-inspect==0.8.0
-colorlog
-rapidfuzz
-spacy
-colorama==0.4.6
-tiktoken==0.5.1
+# VulTrial - Vulnerability Detection Framework
+# Python 3.10+ required
+# Core dependencies
+
+# LLM Provider SDKs (install only what you need)
+openai>=1.0.0              # For OpenAI GPT models
+anthropic>=0.18.0          # For Claude models
+google-generativeai>=0.3.0 # For Gemini models
+
+# Other dependencies
+pyyaml>=6.0                # For configuration (if needed in future)
+
+# Advanced code analysis
+libcst>=1.8.5              # Enhanced AST with more metadata
+networkx>=3.5              # Graph algorithms for call chains
+astroid>=4.0.1             # Advanced static analysis
+
+# Optional system dependency (not a Python package):
+# - cscope (recommended for C/C++ backend). Install via your OS package manager.
+#   Examples:
+#   - macOS: brew install cscope
+#   - Ubuntu/Debian: sudo apt-get install -y cscope
+#   - Fedora: sudo dnf install -y cscope
+#   - Arch: sudo pacman -S cscope

@@ -1,0 +1,23 @@
+{
+  "name": "vultrial-js-ts-parser",
+  "version": "1.0.0",
+  "description": "TypeScript/JavaScript AST parser bridge for VulTrial",
+  "main": "tsmorph_bridge.js",
+  "scripts": {
+    "install-deps": "npm install",
+    "test": "node tsmorph_bridge.js"
+  },
+  "dependencies": {
+    "ts-morph": "^21.0.0"
+  },
+  "keywords": [
+    "typescript",
+    "javascript",
+    "ast",
+    "parser",
+    "vultrial"
+  ],
+  "author": "VulTrial",
+  "license": "MIT"
+}
+
