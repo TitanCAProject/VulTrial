@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional, List
 from ..agents.conversation_agent import ConversationAgent
 from ..models.base import BaseLLMModel
 from ..utils.logger import VulTrialLogger
+from ..utils.json_extractor import clean_agent_response
 from ..prompts import (
     SECURITY_RESEARCHER_PROMPT,
     CODE_AUTHOR_PROMPT,
@@ -185,12 +186,6 @@ class VulTrialPipeline:
             
             turn_results = {}
             
-            # Switch to "later turn" prompts for turn 2+
-            if turn >= 2:
-                self.security_researcher.update_role_description(SECURITY_RESEARCHER_PROMPT_LATER)
-                self.code_author.update_role_description(CODE_AUTHOR_PROMPT_LATER)
-                self.moderator.update_role_description(MODERATOR_PROMPT_LATER)
-            
             # Step 1: Security Researcher
             sr_response = self._run_agent(
                 self.security_researcher, code, turn, "security_researcher"
@@ -214,7 +209,7 @@ class VulTrialPipeline:
             )
             turn_results["code_author"] = ca_response
             
-            # Step 3: Moderator
+            # Step 3: Moderator (just summarizes)
             mod_response = self._run_agent(
                 self.moderator, code, turn, "moderator"
             )
@@ -222,14 +217,6 @@ class VulTrialPipeline:
             
             # Save turn results
             results["turns"].append(turn_results)
-            
-            # Check if moderator says no more debate needed
-            if self._check_debate_complete(mod_response):
-                if self.verbose:
-                    print(f"\n{'*'*60}")
-                    print(f"Moderator: Debate complete - Moving to final decision")
-                    print(f"{'*'*60}\n")
-                break
         
         # Final step: Review Board decision
         final_decision = self._get_review_board_decision(code)
@@ -249,7 +236,7 @@ class VulTrialPipeline:
         turn: int,
         agent_name: str
     ) -> str:
-        """Run a single agent"""
+        """Run a single agent and clean the response"""
         if self.logger:
             self.logger.log_agent_start(agent_name, turn)
         
@@ -261,13 +248,24 @@ class VulTrialPipeline:
         }
         
         response = agent.process(agent_input)
-        self.history_manager.add_message(agent_name, response)
+        
+        # Clean the response to extract JSON
+        if agent_name in ["security_researcher", "code_author"]:
+            # These agents should output arrays
+            cleaned_response = clean_agent_response(response, expected_type="array")
+        elif agent_name == "moderator":
+            # Moderator outputs object
+            cleaned_response = clean_agent_response(response, expected_type="object")
+        else:
+            cleaned_response = response
+        
+        self.history_manager.add_message(agent_name, cleaned_response)
         
         if self.logger:
             tokens_used = agent.last_tokens_used
-            self.logger.log_agent_response(agent_name, response, tokens_used)
+            self.logger.log_agent_response(agent_name, cleaned_response, tokens_used)
         
-        return response
+        return cleaned_response
     
     def _get_review_board_decision(self, code: str) -> str:
         """Get final Review Board decision"""
@@ -285,7 +283,11 @@ class VulTrialPipeline:
             "chat_history": review_chat_history
         }
         
-        final_decision = self.review_board.process(review_input)
+        response = self.review_board.process(review_input)
+        
+        # Clean the Review Board response to extract JSON array
+        final_decision = clean_agent_response(response, expected_type="array")
+        
         self.history_manager.add_message("review_board", final_decision)
         
         if self.logger:
@@ -310,19 +312,6 @@ class VulTrialPipeline:
         except:
             return False
     
-    @staticmethod
-    def _check_debate_complete(moderator_response: str) -> bool:
-        """Check if moderator indicates debate is complete"""
-        lower_response = moderator_response.lower()
-        complete_indicators = [
-            "no further debate",
-            "debate complete",
-            "no additional evidence needed",
-            "parties have reached",
-            "consensus reached",
-            "both parties agree"
-        ]
-        return any(indicator in lower_response for indicator in complete_indicators)
     
     def reset(self):
         """Reset the pipeline state"""

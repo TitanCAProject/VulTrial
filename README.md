@@ -86,18 +86,6 @@ python -m app.main --code-snippet "code" \
                    --max-turns 4
 ```
 
-## Recommended Models
-
-| Model | Hugging Face ID | Quality | Speed | Memory (4-bit) | Best For |
-|-------|----------------|---------|-------|----------------|----------|
-| **Qwen 7B** | Qwen/Qwen2-7B-Instruct | Good | Fast | ~4GB | Daily use, quick scans |
-| **Qwen 32B** | Qwen/Qwen2-32B-Instruct | Excellent | Medium | ~16GB | Best balance |
-| **Llama 3 8B** | meta-llama/Meta-Llama-3-8B-Instruct | Good | Fast | ~4GB | Fast inference |
-| **Llama 3 70B** | meta-llama/Meta-Llama-3-70B-Instruct | Excellent | Slow | ~35GB | Highest quality |
-| **CodeLlama 13B** | codellama/CodeLlama-13b-Instruct-hf | Good | Medium | ~7GB | Code-focused |
-| **CodeLlama 34B** | codellama/CodeLlama-34b-Instruct-hf | Excellent | Slow | ~17GB | Deep code analysis |
-| **Mistral 7B** | mistralai/Mistral-7B-Instruct-v0.3 | Good | Fast | ~4GB | Efficient analysis |
-
 ## Command Line Arguments
 
 | Argument | Short | Description | Default |
@@ -171,23 +159,6 @@ FINAL DECISION
 ]
 ======================================================================
 ```
-
-## Memory Optimization
-
-### Quantization
-
-- **None**: Best quality, highest memory usage
-- **8-bit**: Good quality, ~50% memory reduction
-- **4-bit**: Acceptable quality, ~75% memory reduction
-
-### Tips
-
-1. Use 4-bit quantization for large models (32B+)
-2. Use 8-bit quantization for medium models (13B-70B)
-3. Close other GPU applications before running
-4. Consider using smaller models for quick scans
-
-
 
 ## License
 

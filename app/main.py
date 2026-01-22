@@ -148,8 +148,8 @@ Note: Some models require Hugging Face authentication. Set HF_TOKEN environment 
     parser.add_argument(
         '--max-tokens',
         type=int,
-        default=2048,
-        help='Maximum tokens to generate per response (default: 2048)'
+        default=8096,
+        help='Maximum tokens to generate per response (default: 8096)'
     )
     
     parser.add_argument(
@@ -234,11 +234,25 @@ Note: Some models require Hugging Face authentication. Set HF_TOKEN environment 
         print("\n" + "="*70)
         print("FINAL DECISION")
         print("="*70)
-        print(results["final_decision"])
+        
+        # Parse and pretty-print the final decision JSON
+        try:
+            final_json = json.loads(results["final_decision"])
+            print(json.dumps(final_json, indent=2, ensure_ascii=False))
+        except:
+            # Fallback if parsing fails
+            print(results["final_decision"])
+        
         print("="*70)
         
         # Save to file if requested
         if args.output:
+            # Parse final_decision to proper JSON object (not escaped string)
+            try:
+                final_decision_json = json.loads(results["final_decision"])
+            except:
+                final_decision_json = results["final_decision"]
+            
             output_data = {
                 "timestamp": datetime.now().isoformat(),
                 "model": args.model,
@@ -246,7 +260,7 @@ Note: Some models require Hugging Face authentication. Set HF_TOKEN environment 
                 "code_snippet": code,
                 "max_turns": args.max_turns,
                 "token_usage": usage,
-                "final_decision": results["final_decision"],
+                "final_decision": final_decision_json,  # Clean JSON object, not escaped string
                 "turns": results["turns"]
             }
             
