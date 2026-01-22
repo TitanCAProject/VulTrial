@@ -1,4 +1,7 @@
-"""VulTrial - Vulnerability Detection Framework"""
+"""
+VulTrial - Multi-Agent Vulnerability Detection Framework
 
-__version__ = "0.4.0"
+A code snippet vulnerability analyzer using multi-agent debate.
+"""
 
+__version__ = "1.0.0"

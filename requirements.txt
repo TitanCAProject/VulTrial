@@ -1,24 +1,12 @@
-# VulTrial - Vulnerability Detection Framework
+# VulTrial - Code Vulnerability Analyzer (Open Source)
 # Python 3.10+ required
-# Core dependencies
 
-# LLM Provider SDKs (install only what you need)
-openai>=1.0.0              # For OpenAI GPT models
-anthropic>=0.18.0          # For Claude models
-google-generativeai>=0.3.0 # For Gemini models
+# Core dependencies for open-source models
+torch>=2.0.0                # PyTorch for model inference
+transformers>=4.35.0        # Hugging Face transformers
+accelerate>=0.24.0          # For efficient model loading
+bitsandbytes>=0.41.0        # For 8-bit and 4-bit quantization
 
-# Other dependencies
-pyyaml>=6.0                # For configuration (if needed in future)
-
-# Advanced code analysis
-libcst>=1.8.5              # Enhanced AST with more metadata
-networkx>=3.5              # Graph algorithms for call chains
-astroid>=4.0.1             # Advanced static analysis
-
-# Optional system dependency (not a Python package):
-# - cscope (recommended for C/C++ backend). Install via your OS package manager.
-#   Examples:
-#   - macOS: brew install cscope
-#   - Ubuntu/Debian: sudo apt-get install -y cscope
-#   - Fedora: sudo dnf install -y cscope
-#   - Arch: sudo pacman -S cscope
+# Optional: For faster inference
+# optimum                   # Hugging Face optimization tools
+# flash-attn                # Flash Attention for faster inference (requires CUDA)

@@ -1,6 +1,5 @@
-"""Pipeline for orchestrating agent conversations"""
+"""VulTrial Pipeline"""
 
 from .vultrial_pipeline import VulTrialPipeline
 
 __all__ = ['VulTrialPipeline']
-

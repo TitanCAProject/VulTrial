@@ -1,119 +1,121 @@
-"""Main pipeline for vulnerability detection with multi-agent debate (Refactored)"""
+"""
+VulTrial Pipeline - Multi-Agent Debate for Vulnerability Detection
 
-from pathlib import Path
-from typing import Dict, Any, Optional
+Simple pipeline with four agents debating about code vulnerabilities.
+"""
+
+import json
+from typing import Dict, Any, Optional, List
+
 from ..agents.conversation_agent import ConversationAgent
 from ..models.base import BaseLLMModel
-from ..context.research_assistant import ResearchAssistant
+from ..utils.logger import VulTrialLogger
 from ..prompts import (
-    # Analysis modes
-    ANALYSIS_MODE_DETAILED,
-    ANALYSIS_MODE_CONSENSUS,
-    # Detailed mode prompts
     SECURITY_RESEARCHER_PROMPT,
     CODE_AUTHOR_PROMPT,
     MODERATOR_PROMPT,
     REVIEW_BOARD_PROMPT,
-    # Detailed mode - later turns
     SECURITY_RESEARCHER_PROMPT_LATER,
     CODE_AUTHOR_PROMPT_LATER,
-    # Consensus mode prompts
-    SECURITY_RESEARCHER_PROMPT_CONSENSUS,
-    CODE_AUTHOR_PROMPT_CONSENSUS,
-    MODERATOR_PROMPT_CONSENSUS,
-    REVIEW_BOARD_PROMPT_CONSENSUS,
+    MODERATOR_PROMPT_LATER,
 )
-from ..utils.logger import VulTrialLogger
 
-# Import refactored modules
-from .utils.backend_detector import BackendDetector
-from .managers.history_manager import HistoryManager
-from .managers.evidence_coordinator import EvidenceCoordinator
-from .managers.assessment_generator import AssessmentGenerator
-from .analyzers.single_analyzer import SingleAnalyzer
-from .analyzers.multi_function_analyzer import MultiFunctionAnalyzer
-from .analyzers.codebase_analyzer import CodebaseAnalyzer
+
+class HistoryManager:
+    """Manages conversation history"""
+    
+    def __init__(self):
+        self.conversation_log: List[Dict[str, str]] = []
+    
+    def add_message(self, agent_name: str, message: str):
+        """Add message to conversation log"""
+        self.conversation_log.append({
+            "agent": agent_name,
+            "message": message
+        })
+    
+    def build_history_for_agent(self, agent_name: str) -> str:
+        """Build chat history string for an agent"""
+        if not self.conversation_log:
+            return ""
+        
+        history_parts = []
+        
+        if agent_name == "review_board":
+            # Review board gets full history
+            history_parts.append("[DEBATE HISTORY]:\n")
+            for entry in self.conversation_log:
+                agent = entry["agent"]
+                message = entry["message"]
+                history_parts.append(f"[{agent.upper()}]:\n{message}\n\n")
+        
+        elif agent_name == "moderator":
+            # Moderator sees current turn (last 2 messages: SR, CA)
+            recent_entries = self.conversation_log[-2:] if len(self.conversation_log) >= 2 else self.conversation_log
+            
+            history_parts.append("[CURRENT TURN]:\n")
+            for entry in recent_entries:
+                agent = entry["agent"]
+                message = entry["message"]
+                history_parts.append(f"[{agent.upper()}]:\n{message}\n\n")
+            
+            # Add previous moderator summaries
+            if len(self.conversation_log) > 2:
+                moderator_entries = [e for e in self.conversation_log[:-2] if e["agent"] == "moderator"]
+                if moderator_entries:
+                    history_parts.append("[PREVIOUS SUMMARIES]:\n")
+                    for i, entry in enumerate(moderator_entries, 1):
+                        history_parts.append(f"Turn {i}: {entry['message'][:200]}...\n\n")
+        
+        else:
+            # SR and CA see full history
+            history_parts.append("[DEBATE SO FAR]:\n")
+            for entry in self.conversation_log:
+                agent = entry["agent"]
+                message = entry["message"]
+                history_parts.append(f"[{agent.upper()}]:\n{message}\n\n")
+        
+        return "".join(history_parts)
+    
+    def clear(self):
+        """Clear conversation log"""
+        self.conversation_log = []
+    
+    def get_conversation_log(self) -> List[Dict[str, str]]:
+        """Get raw conversation log"""
+        return self.conversation_log
 
 
 class VulTrialPipeline:
     """
-    Pipeline for multi-agent vulnerability detection with adversarial research assistants
+    Pipeline for multi-agent vulnerability detection
     
-    Flow: SR → CA → Moderator → [Need Evidence?] → SR_Assistant & CA_Assistant → SR & CA (enhanced) → Moderator → [iterate] → ReviewBoard
+    Flow: Security Researcher → Code Author → Moderator → [iterate] → Review Board
     """
     
     def __init__(
         self,
         model: BaseLLMModel,
-        max_turns: int = None,
-        verbose: bool = True,
-        codebase_path: Optional[str] = None,
-        enable_context_retrieval: bool = False,
-        enable_pre_debate_summary: bool = True,
-        analysis_mode: str = ANALYSIS_MODE_DETAILED,
-        # Configurable context management thresholds
-        max_evidence_items: int = None,
-        max_evidence_tokens_per_item: int = None,
-        max_evidence_lines_per_item: int = None,
-        evidence_total_token_budget: Optional[int] = None,
-        history_compression_start_turn: int = None,
-        history_compression_token_budget: Optional[int] = None
+        max_turns: int = 4,
+        verbose: bool = True
     ):
         """
         Initialize the pipeline
         
         Args:
             model: LLM model to use for all agents
-            max_turns: Maximum number of debate rounds before final review
+            max_turns: Maximum number of debate rounds
             verbose: Whether to print detailed output
-            codebase_path: Path to codebase for context retrieval (optional)
-            enable_context_retrieval: Whether to enable context retrieval
-            enable_pre_debate_summary: Whether to enable pre-debate summarization
-            analysis_mode: Analysis mode - 'detailed' (find ALL vulnerabilities) or 'consensus' (only obvious ones)
-            max_evidence_items: Maximum number of evidence items to keep (default: 5)
-            max_evidence_tokens_per_item: Max tokens per evidence item before truncation (default: 1000)
-            max_evidence_lines_per_item: Max lines per evidence item before truncation (default: 100)
-            evidence_total_token_budget: Total token budget for all evidence (default: auto from model)
-            history_compression_start_turn: Turn number to start compressing history (default: 3)
-            history_compression_token_budget: Token budget for compressed history (default: auto from model)
         """
-        from ..ui.constants import UIConstants
-        
         self.model = model
-        self.max_turns = max_turns if max_turns is not None else UIConstants.DEFAULT_MAX_TURNS
+        self.max_turns = max_turns
         self.verbose = verbose
-        self.enable_context_retrieval = enable_context_retrieval
-        self.enable_pre_debate_summary = enable_pre_debate_summary
-        self.analysis_mode = analysis_mode
-        
-        # Context management configuration
-        self.max_evidence_items = max_evidence_items if max_evidence_items is not None else UIConstants.MAX_EVIDENCE_ITEMS
-        self.max_evidence_tokens_per_item = max_evidence_tokens_per_item if max_evidence_tokens_per_item is not None else UIConstants.MAX_EVIDENCE_TOKENS_PER_ITEM
-        self.max_evidence_lines_per_item = max_evidence_lines_per_item if max_evidence_lines_per_item is not None else UIConstants.MAX_EVIDENCE_LINES_PER_ITEM
-        self.history_compression_start_turn = history_compression_start_turn if history_compression_start_turn is not None else UIConstants.HISTORY_COMPRESSION_START_TURN
-        
-        # Calculate token budgets based on model capacity
-        model_max_tokens = getattr(model, 'max_tokens', 16000)
-        self.evidence_total_token_budget = evidence_total_token_budget or min(4000, model_max_tokens // 4)
-        self.history_compression_token_budget = history_compression_token_budget or min(8000, model_max_tokens // 3)
-        
-        # Select prompts based on analysis mode
-        if analysis_mode == ANALYSIS_MODE_CONSENSUS:
-            sr_prompt = SECURITY_RESEARCHER_PROMPT_CONSENSUS
-            ca_prompt = CODE_AUTHOR_PROMPT_CONSENSUS
-            mod_prompt = MODERATOR_PROMPT_CONSENSUS
-            rb_prompt = REVIEW_BOARD_PROMPT_CONSENSUS
-        else:
-            sr_prompt = SECURITY_RESEARCHER_PROMPT
-            ca_prompt = CODE_AUTHOR_PROMPT
-            mod_prompt = MODERATOR_PROMPT
-            rb_prompt = REVIEW_BOARD_PROMPT
         
         # Initialize agents
         self.security_researcher = ConversationAgent(
             name="security_researcher",
             model=model,
-            role_description=sr_prompt,
+            role_description=SECURITY_RESEARCHER_PROMPT,
             receivers=["code_author", "moderator", "review_board"],
             verbose=verbose
         )
@@ -121,7 +123,7 @@ class VulTrialPipeline:
         self.code_author = ConversationAgent(
             name="code_author",
             model=model,
-            role_description=ca_prompt,
+            role_description=CODE_AUTHOR_PROMPT,
             receivers=["security_researcher", "moderator", "review_board"],
             verbose=verbose
         )
@@ -129,7 +131,7 @@ class VulTrialPipeline:
         self.moderator = ConversationAgent(
             name="moderator",
             model=model,
-            role_description=mod_prompt,
+            role_description=MODERATOR_PROMPT,
             receivers=["review_board", "security_researcher", "code_author"],
             verbose=verbose
         )
@@ -137,121 +139,20 @@ class VulTrialPipeline:
         self.review_board = ConversationAgent(
             name="review_board",
             model=model,
-            role_description=rb_prompt,
+            role_description=REVIEW_BOARD_PROMPT,
             receivers=[],
             verbose=verbose
         )
         
-        # Search cache
-        self.search_cache: Dict[str, Any] = {}
-        
-        # Initialize search backend and assistants
-        self.search_backend = None
-        self.sr_assistant = None
-        self.ca_assistant = None
-        
-        if enable_context_retrieval and codebase_path:
-            # Detect backend type and create backend
-            backend_type = BackendDetector.detect_code_type(codebase_path)
-            self.search_backend = BackendDetector.create_backend(backend_type, codebase_path, verbose)
-            
-            # Create research assistants
-            self.sr_assistant = ResearchAssistant(
-                agent_name="security_researcher",
-                model=model,
-                search_backend=self.search_backend,
-                verbose=verbose,
-                logger=None,
-                analysis_mode=analysis_mode,
-                max_evidence_items=self.max_evidence_items,
-                max_evidence_tokens_per_item=self.max_evidence_tokens_per_item,
-                max_evidence_lines_per_item=self.max_evidence_lines_per_item,
-                evidence_total_token_budget=self.evidence_total_token_budget
-            )
-            
-            self.ca_assistant = ResearchAssistant(
-                agent_name="code_author",
-                model=model,
-                search_backend=self.search_backend,
-                verbose=verbose,
-                logger=None,
-                analysis_mode=analysis_mode,
-                max_evidence_items=self.max_evidence_items,
-                max_evidence_tokens_per_item=self.max_evidence_tokens_per_item,
-                max_evidence_lines_per_item=self.max_evidence_lines_per_item,
-                evidence_total_token_budget=self.evidence_total_token_budget
-            )
-        
-        # Initialize managers
-        self.history_manager = HistoryManager(
-            compression_start_turn=self.history_compression_start_turn,
-            compression_token_budget=self.history_compression_token_budget
-        )
-        
-        self.evidence_coordinator = EvidenceCoordinator(
-            sr_assistant=self.sr_assistant,
-            ca_assistant=self.ca_assistant,
-            search_cache=self.search_cache,
-            verbose=verbose
-        )
-        
-        self.assessment_generator = AssessmentGenerator(
-            model=model,
-            verbose=verbose
-        )
-        
-        # Initialize analyzers
-        self.single_analyzer = SingleAnalyzer(
-            security_researcher=self.security_researcher,
-            code_author=self.code_author,
-            moderator=self.moderator,
-            review_board=self.review_board,
-            history_manager=self.history_manager,
-            evidence_coordinator=self.evidence_coordinator,
-            max_turns=self.max_turns,
-            analysis_mode=analysis_mode,
-            enable_context_retrieval=enable_context_retrieval,
-            enable_pre_debate_summary=enable_pre_debate_summary,
-            verbose=verbose,
-            logger=None
-        )
-        
-        self.multi_function_analyzer = MultiFunctionAnalyzer(
-            single_analyzer=self.single_analyzer,
-            assessment_generator=self.assessment_generator,
-            security_researcher=self.security_researcher,
-            code_author=self.code_author,
-            moderator=self.moderator,
-            review_board=self.review_board,
-            sr_assistant=self.sr_assistant,
-            search_cache=self.search_cache,
-            analysis_mode=analysis_mode,
-            verbose=verbose,
-            logger=None
-        )
-        
-        self.codebase_analyzer = CodebaseAnalyzer(
-            multi_function_analyzer=self.multi_function_analyzer,
-            assessment_generator=self.assessment_generator,
-            verbose=verbose,
-            logger=None
-        )
+        # History manager
+        self.history_manager = HistoryManager()
         
         # Logger
         self.logger: Optional[VulTrialLogger] = None
     
     def set_logger(self, logger: VulTrialLogger):
-        """Set logger for pipeline and all components"""
+        """Set logger for pipeline"""
         self.logger = logger
-        if self.sr_assistant:
-            self.sr_assistant.logger = logger
-        if self.ca_assistant:
-            self.ca_assistant.logger = logger
-        
-        # Set logger for analyzers
-        self.single_analyzer.logger = logger
-        self.multi_function_analyzer.logger = logger
-        self.codebase_analyzer.logger = logger
     
     def run(self, code: str, input_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -259,44 +160,173 @@ class VulTrialPipeline:
         
         Args:
             code: Code snippet to analyze
-            input_metadata: Optional metadata about the input (file, function, codebase info)
+            input_metadata: Optional metadata (unused, kept for compatibility)
             
         Returns:
             Dict containing results from all agents
         """
-        # Check if we're analyzing entire codebase
-        if self._is_codebase_analysis(input_metadata):
-            return self.codebase_analyzer.analyze(input_metadata)
+        if self.verbose:
+            print("\n" + "="*70)
+            print("VulTrial Pipeline Starting")
+            print("="*70)
         
-        # Check if we need to analyze multiple functions
-        elif self._is_multi_function_analysis(input_metadata):
-            return self.multi_function_analyzer.analyze(code, input_metadata)
+        results = {
+            "code": code,
+            "turns": [],
+            "final_decision": None
+        }
         
-        # Single analysis mode (function or whole file)
-        else:
-            return self.single_analyzer.analyze(code, input_metadata)
+        # Multi-turn debate
+        for turn in range(1, self.max_turns + 1):
+            if self.verbose:
+                print(f"\n{'#'*70}")
+                print(f"# TURN {turn}/{self.max_turns}")
+                print(f"{'#'*70}\n")
+            
+            turn_results = {}
+            
+            # Switch to "later turn" prompts for turn 2+
+            if turn >= 2:
+                self.security_researcher.update_role_description(SECURITY_RESEARCHER_PROMPT_LATER)
+                self.code_author.update_role_description(CODE_AUTHOR_PROMPT_LATER)
+                self.moderator.update_role_description(MODERATOR_PROMPT_LATER)
+            
+            # Step 1: Security Researcher
+            sr_response = self._run_agent(
+                self.security_researcher, code, turn, "security_researcher"
+            )
+            turn_results["security_researcher"] = sr_response
+            
+            # Check if SR found no vulnerabilities
+            if self._check_empty_vulnerability_array(sr_response):
+                if self.verbose:
+                    print(f"\n{'*'*60}")
+                    print(f"Security Researcher found no vulnerabilities - Ending early")
+                    print(f"{'*'*60}\n")
+                
+                results["turns"].append(turn_results)
+                results["final_decision"] = "[]"
+                return results
+            
+            # Step 2: Code Author
+            ca_response = self._run_agent(
+                self.code_author, code, turn, "code_author"
+            )
+            turn_results["code_author"] = ca_response
+            
+            # Step 3: Moderator
+            mod_response = self._run_agent(
+                self.moderator, code, turn, "moderator"
+            )
+            turn_results["moderator"] = mod_response
+            
+            # Save turn results
+            results["turns"].append(turn_results)
+            
+            # Check if moderator says no more debate needed
+            if self._check_debate_complete(mod_response):
+                if self.verbose:
+                    print(f"\n{'*'*60}")
+                    print(f"Moderator: Debate complete - Moving to final decision")
+                    print(f"{'*'*60}\n")
+                break
+        
+        # Final step: Review Board decision
+        final_decision = self._get_review_board_decision(code)
+        results["final_decision"] = final_decision
+        
+        if self.verbose:
+            print("\n" + "="*70)
+            print("VulTrial Pipeline Completed")
+            print("="*70 + "\n")
+        
+        return results
     
-    def _is_codebase_analysis(self, input_metadata: Optional[Dict[str, Any]]) -> bool:
-        """Check if this is a codebase analysis"""
-        return (
-            input_metadata is not None and
-            input_metadata.get('input_type') == 'codebase' and
-            input_metadata.get('codebase_path') is not None
-        )
+    def _run_agent(
+        self,
+        agent: ConversationAgent,
+        code: str,
+        turn: int,
+        agent_name: str
+    ) -> str:
+        """Run a single agent"""
+        if self.logger:
+            self.logger.log_agent_start(agent_name, turn)
+        
+        chat_history = self.history_manager.build_history_for_agent(agent_name)
+        
+        agent_input = {
+            "code": code,
+            "chat_history": chat_history
+        }
+        
+        response = agent.process(agent_input)
+        self.history_manager.add_message(agent_name, response)
+        
+        if self.logger:
+            tokens_used = agent.last_tokens_used
+            self.logger.log_agent_response(agent_name, response, tokens_used)
+        
+        return response
     
-    def _is_multi_function_analysis(self, input_metadata: Optional[Dict[str, Any]]) -> bool:
-        """Check if this is a multi-function analysis"""
-        return (
-            input_metadata is not None and
-            input_metadata.get('input_type') == 'file' and
-            not input_metadata.get('function_name') and
-            input_metadata.get('file_path') is not None
-        )
+    def _get_review_board_decision(self, code: str) -> str:
+        """Get final Review Board decision"""
+        if self.verbose:
+            print(f"\n{'#'*70}")
+            print(f"# FINAL REVIEW BOARD DECISION")
+            print(f"{'#'*70}\n")
+        
+        if self.logger:
+            self.logger.log_agent_start("review_board")
+        
+        review_chat_history = self.history_manager.build_history_for_agent("review_board")
+        review_input = {
+            "code": code,
+            "chat_history": review_chat_history
+        }
+        
+        final_decision = self.review_board.process(review_input)
+        self.history_manager.add_message("review_board", final_decision)
+        
+        if self.logger:
+            tokens_used = self.review_board.last_tokens_used
+            self.logger.log_agent_response("review_board", final_decision, tokens_used)
+            self.logger.log_decision(final_decision)
+        
+        return final_decision
+    
+    @staticmethod
+    def _check_empty_vulnerability_array(researcher_response: str) -> bool:
+        """Check if Security Researcher found no vulnerabilities"""
+        try:
+            response_clean = researcher_response.strip()
+            if '```json' in response_clean:
+                response_clean = response_clean.split('```json')[1].split('```')[0]
+            elif '```' in response_clean:
+                response_clean = response_clean.split('```')[1].split('```')[0]
+            
+            vulnerabilities = json.loads(response_clean)
+            return isinstance(vulnerabilities, list) and len(vulnerabilities) == 0
+        except:
+            return False
+    
+    @staticmethod
+    def _check_debate_complete(moderator_response: str) -> bool:
+        """Check if moderator indicates debate is complete"""
+        lower_response = moderator_response.lower()
+        complete_indicators = [
+            "no further debate",
+            "debate complete",
+            "no additional evidence needed",
+            "parties have reached",
+            "consensus reached",
+            "both parties agree"
+        ]
+        return any(indicator in lower_response for indicator in complete_indicators)
     
     def reset(self):
         """Reset the pipeline state"""
         self.history_manager.clear()
-        self.search_cache = {}
         self.security_researcher.clear_history()
         self.code_author.clear_history()
         self.moderator.clear_history()
