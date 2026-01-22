@@ -187,10 +187,7 @@ FINAL DECISION
 3. Close other GPU applications before running
 4. Consider using smaller models for quick scans
 
-## Authors
 
-**Main Authors:** Yue Liu, Ratnadira Widyasari  
-**Contact:** yuehhhliu@gmail.com
 
 ## License
 
